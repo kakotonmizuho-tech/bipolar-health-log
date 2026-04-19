@@ -1,4 +1,14 @@
-export const getTodayStr = () => new Date().toISOString().split('T')[0]
+export const getTodayStr = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+// dateTimeStr（UTC含む）をローカル日付文字列に変換
+export const toLocalDateStr = (dateTimeStr) => {
+  if (!dateTimeStr) return ''
+  const d = new Date(dateTimeStr)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 export const formatDate = (dateStr) =>
   new Date(dateStr + 'T00:00:00').toLocaleDateString('ja-JP', {

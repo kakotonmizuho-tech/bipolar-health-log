@@ -27,8 +27,9 @@ export function useCalendar() {
     try {
       const today = new Date(); today.setHours(0, 0, 0, 0)
       const dayAfterTomorrow = new Date(today); dayAfterTomorrow.setDate(today.getDate() + 2)
+      const { calendarId } = getSettings()
       const resp = await window.gapi.client.calendar.events.list({
-        calendarId: 'primary',
+        calendarId: calendarId || 'primary',
         timeMin: today.toISOString(),
         timeMax: dayAfterTomorrow.toISOString(),
         singleEvents: true,

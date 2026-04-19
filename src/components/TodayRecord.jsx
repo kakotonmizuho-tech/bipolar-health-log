@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useWeather } from '../hooks/useWeather'
 import { useCalendar } from '../hooks/useCalendar'
 import { getRecord } from '../utils/storage'
-import { formatDate, calcSleepHours, getTodayStr, formatEventTime } from '../utils/dateUtils'
+import { formatDate, calcSleepHours, getTodayStr, formatEventTime, toLocalDateStr } from '../utils/dateUtils'
 
 // ── 顔文字マッピング ────────────────────────────────────────────
 const MOOD_EMOJI = ['', '😭', '😢', '😟', '😕', '😐', '🙂', '😊', '😄', '😁', '🤩']
@@ -99,8 +99,13 @@ export default function TodayRecord({ onSave }) {
 
   // カレンダー：その日と翌日の予定
   const tomorrowStr = addDays(dateStr, 1)
-  const todayEvents    = events.filter(e => (e.start?.dateTime ?? e.start?.date ?? '').startsWith(dateStr))
-  const tomorrowEvents = events.filter(e => (e.start?.dateTime ?? e.start?.date ?? '').startsWith(tomorrowStr))
+  const matchDate = (e, target) => {
+    if (e.start?.date) return e.start.date === target           // 終日イベント
+    if (e.start?.dateTime) return toLocalDateStr(e.start.dateTime) === target  // 時刻付き（タイムゾーン考慮）
+    return false
+  }
+  const todayEvents    = events.filter(e => matchDate(e, dateStr))
+  const tomorrowEvents = events.filter(e => matchDate(e, tomorrowStr))
   const showCalendar = isToday && cError !== 'no-config'
 
   return (

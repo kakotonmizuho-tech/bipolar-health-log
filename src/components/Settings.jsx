@@ -2,17 +2,33 @@ import { useState, useEffect } from 'react'
 import { getSettings, saveSettings, exportRecords, clearAllData } from '../utils/storage'
 
 export default function Settings({ onSave }) {
-  const [form, setForm] = useState({ googleApiKey: '', googleClientId: '' })
+  const [form, setForm] = useState({ googleApiKey: '', googleClientId: '', calendarId: '' })
   const [saved, setSaved] = useState(false)
   const [showClearConfirm, setShowClearConfirm] = useState(false)
+  const [calendarList, setCalendarList] = useState([])
+  const [loadingCals, setLoadingCals] = useState(false)
 
   useEffect(() => {
     const s = getSettings()
     setForm({
       googleApiKey: s.googleApiKey ?? import.meta.env.VITE_GOOGLE_API_KEY ?? '',
       googleClientId: s.googleClientId ?? import.meta.env.VITE_GOOGLE_CLIENT_ID ?? '',
+      calendarId: s.calendarId ?? 'primary',
     })
   }, [])
+
+  const fetchCalendarList = async () => {
+    if (!window.gapi?.client?.calendar) return
+    setLoadingCals(true)
+    try {
+      const resp = await window.gapi.client.calendar.calendarList.list()
+      setCalendarList(resp.result.items ?? [])
+    } catch {
+      // silent
+    } finally {
+      setLoadingCals(false)
+    }
+  }
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
 
@@ -63,6 +79,41 @@ export default function Settings({ onSave }) {
             placeholder="xxxx.apps.googleusercontent.com"
             className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 font-mono"
           />
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-xs text-slate-500 font-medium">カレンダーID</label>
+            <button onClick={fetchCalendarList} disabled={loadingCals}
+              className="text-[10px] text-indigo-500 underline disabled:opacity-40">
+              {loadingCals ? '取得中...' : 'カレンダー一覧を取得'}
+            </button>
+          </div>
+          <input
+            type="text"
+            value={form.calendarId}
+            onChange={e => set('calendarId', e.target.value)}
+            placeholder="primary（デフォルト）"
+            className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 font-mono"
+          />
+          {calendarList.length > 0 && (
+            <div className="mt-2 border border-slate-200 rounded-xl overflow-hidden">
+              {calendarList.map(cal => (
+                <button key={cal.id} onClick={() => set('calendarId', cal.id)}
+                  className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 hover:bg-slate-50 border-b border-slate-100 last:border-0 ${
+                    form.calendarId === cal.id ? 'bg-indigo-50' : ''
+                  }`}>
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0"
+                    style={{ backgroundColor: cal.backgroundColor ?? '#6366f1' }} />
+                  <span className="font-medium text-slate-700 truncate">{cal.summary}</span>
+                  {cal.primary && <span className="text-[10px] text-indigo-400 ml-auto shrink-0">メイン</span>}
+                </button>
+              ))}
+            </div>
+          )}
+          <p className="text-[10px] text-slate-400 mt-1">
+            「カレンダー一覧を取得」で選択できます。空欄の場合はメインカレンダーを使用。
+          </p>
         </div>
 
         <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 text-xs text-blue-700 space-y-1">
