@@ -1,31 +1,35 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useWeather } from '../hooks/useWeather'
 import { useCalendar } from '../hooks/useCalendar'
-import { getRecord } from '../utils/storage'
-import { formatDate, calcSleepHours, getTodayStr, formatEventTime, toLocalDateStr } from '../utils/dateUtils'
+import { getRecord, getSettings } from '../utils/storage'
+import { calcSleepHours, getTodayStr, formatEventTime, toLocalDateStr } from '../utils/dateUtils'
 
-// ── 顔文字マッピング ────────────────────────────────────────────
-const MOOD_EMOJI = ['', '😭', '😢', '😟', '😕', '😐', '🙂', '😊', '😄', '😁', '🤩']
-const MOOD_LABEL = ['', 'とても辛い', '辛い', '落ち込む', 'やや落ち込む', '普通', '少し良い', '良い', 'とても良い', '元気！', '最高！']
-const MOOD_BG = ['', 'bg-red-100 border-red-300', 'bg-red-100 border-red-300', 'bg-orange-100 border-orange-300',
-  'bg-amber-100 border-amber-300', 'bg-slate-100 border-slate-300', 'bg-lime-100 border-lime-300',
-  'bg-green-100 border-green-300', 'bg-emerald-100 border-emerald-300', 'bg-teal-100 border-teal-300', 'bg-cyan-100 border-cyan-300']
-
+// ── デフォルト顔文字（設定で上書き可能） ─────────────────────────
+const DEFAULT_MOOD_EMOJI  = ['', '😭', '😢', '😟', '😕', '😐', '🙂', '😊', '😄', '😁', '🤩']
+const MOOD_LABEL  = ['', 'とても辛い', '辛い', '落ち込む', 'やや落ち込む', '普通', '少し良い', '良い', 'とても良い', '元気！', '最高！']
+const MOOD_BG     = ['',
+  'bg-red-100 border-red-300',    'bg-red-100 border-red-300',
+  'bg-orange-100 border-orange-300', 'bg-amber-100 border-amber-300',
+  'bg-slate-100 border-slate-300',   'bg-lime-100 border-lime-300',
+  'bg-green-100 border-green-300',   'bg-emerald-100 border-emerald-300',
+  'bg-teal-100 border-teal-300',     'bg-cyan-100 border-cyan-300',
+]
 const ANXIETY_EMOJI  = ['', '😌', '🙂', '😐', '😟', '😰']
 const ANXIETY_LABEL  = ['', '全く不安なし', '少し落ち着かない', '普通', 'やや不安', 'とても不安']
-const ANXIETY_BG     = ['', 'bg-emerald-100 border-emerald-300', 'bg-lime-100 border-lime-300',
-  'bg-slate-100 border-slate-300', 'bg-amber-100 border-amber-300', 'bg-red-100 border-red-300']
-
+const ANXIETY_BG     = ['',
+  'bg-emerald-100 border-emerald-300', 'bg-lime-100 border-lime-300',
+  'bg-slate-100 border-slate-300',     'bg-amber-100 border-amber-300',
+  'bg-red-100 border-red-300',
+]
 const SLEEP_SAT_EMOJI = ['', '😩', '😔', '😐', '🙂', '😴']
 const SLEEP_SAT_LABEL = ['', 'とても悪い', '悪い', '普通', '良い', 'とてもよく眠れた']
-const SLEEP_SAT_BG    = ['', 'bg-red-100 border-red-300', 'bg-amber-100 border-amber-300',
-  'bg-slate-100 border-slate-300', 'bg-lime-100 border-lime-300', 'bg-emerald-100 border-emerald-300']
-
+const SLEEP_SAT_BG    = ['',
+  'bg-red-100 border-red-300',   'bg-amber-100 border-amber-300',
+  'bg-slate-100 border-slate-300', 'bg-lime-100 border-lime-300',
+  'bg-emerald-100 border-emerald-300',
+]
 const ACTIVITY = ['低', '中', '高']
 
-const PRESET_MEDS = ['頭痛薬', '解熱剤', '胃薬', '鎮痛剤', '整腸剤', '抗ヒスタミン薬', 'ビタミン剤', '漢方薬']
-
-// ── 日付ユーティリティ ────────────────────────────────────────────
 const addDays = (dateStr, n) => {
   const d = new Date(dateStr + 'T00:00:00')
   d.setDate(d.getDate() + n)
@@ -45,25 +49,59 @@ export default function TodayRecord({ onSave }) {
     sleepSatisfaction: 0, moodScore: 0, anxietyLevel: 0,
     activityLevel: '中', medication: null, memo: '',
   })
-  const [otherMeds, setOtherMeds] = useState([])
-  const [newMed, setNewMed] = useState({ name: '', dose: '', time: '' })
+
+  // マイ薬リスト（設定から）
+  const [myMeds, setMyMeds]     = useState([])
+  const [takenMeds, setTakenMeds] = useState([])   // 今日服薬した薬（id, name, dose, unit, taken）
+
+  // その他の薬（一時追加）
+  const [otherMeds, setOtherMeds]   = useState([])
+  const [newMed, setNewMed]         = useState({ name: '', dose: '', time: '' })
   const [showMedForm, setShowMedForm] = useState(false)
+
+  // カスタム顔文字
+  const [moodEmoji, setMoodEmoji] = useState([...DEFAULT_MOOD_EMOJI])
+
   const [saved, setSaved] = useState(false)
 
-  // 日付変更時にその日の記録を読み込む
+  // 設定・記録を読み込む
   useEffect(() => {
+    const s = getSettings()
+
+    // カスタム顔文字を反映
+    if (s.moodEmoji) {
+      const arr = [...DEFAULT_MOOD_EMOJI]
+      Object.entries(s.moodEmoji).forEach(([k, v]) => { arr[Number(k)] = v })
+      setMoodEmoji(arr)
+    }
+
+    // マイ薬リスト
+    setMyMeds(s.myMeds ?? [])
+  }, [])
+
+  useEffect(() => {
+    const s = getSettings()
     const existing = getRecord(dateStr)
+
     setForm({
-      bedtime: existing?.bedtime ?? '',
-      wakeTime: existing?.wakeTime ?? '',
+      bedtime:          existing?.bedtime          ?? '',
+      wakeTime:         existing?.wakeTime         ?? '',
       sleepSatisfaction: existing?.sleepSatisfaction ?? 0,
-      moodScore: existing?.moodScore ?? 0,
-      anxietyLevel: existing?.anxietyLevel ?? 0,
-      activityLevel: existing?.activityLevel ?? '中',
-      medication: existing?.medication ?? null,
-      memo: existing?.memo ?? '',
+      moodScore:        existing?.moodScore        ?? 0,
+      anxietyLevel:     existing?.anxietyLevel     ?? 0,
+      activityLevel:    existing?.activityLevel    ?? '中',
+      medication:       existing?.medication       ?? null,
+      memo:             existing?.memo             ?? '',
     })
     setOtherMeds(existing?.otherMeds ?? [])
+
+    // マイ薬リストと保存済みの服薬状態をマージ
+    const saved = existing?.takenMeds ?? []
+    const merged = (s.myMeds ?? []).map(m => {
+      const hit = saved.find(t => t.id === m.id)
+      return hit ?? { id: m.id, name: m.name, dose: m.defaultDose, unit: m.unit, taken: false }
+    })
+    setTakenMeds(merged)
     setSaved(false)
   }, [dateStr])
 
@@ -71,42 +109,46 @@ export default function TodayRecord({ onSave }) {
 
   const set = useCallback((k, v) => setForm(f => ({ ...f, [k]: v })), [])
   const sleepHours = calcSleepHours(form.bedtime, form.wakeTime)
-  const isToday = dateStr === todayStr
-  const isFuture = dateStr > todayStr
+  const isToday    = dateStr === todayStr
 
-  // 他の薬を追加
-  const addMed = (name) => {
+  // マイ薬の服薬トグル / 用量変更
+  const toggleTaken  = (id) => setTakenMeds(prev => prev.map(m => m.id === id ? { ...m, taken: !m.taken } : m))
+  const changeDose   = (id, dose) => setTakenMeds(prev => prev.map(m => m.id === id ? { ...m, dose } : m))
+
+  // その他の薬
+  const addOtherMed = (name) => {
     const n = name ?? newMed.name.trim()
     if (!n) return
     setOtherMeds(prev => [...prev, { id: Date.now(), name: n, dose: newMed.dose, time: newMed.time }])
     setNewMed({ name: '', dose: '', time: '' })
     setShowMedForm(false)
   }
-  const removeMed = (id) => setOtherMeds(prev => prev.filter(m => m.id !== id))
+  const removeOtherMed = (id) => setOtherMeds(prev => prev.filter(m => m.id !== id))
 
   const handleSave = () => {
+    const rec = getRecord(dateStr)
     onSave(dateStr, {
       ...form,
       sleepHours,
+      takenMeds,
       otherMeds,
-      weather: isToday ? (weather?.text ?? '') : (getRecord(dateStr)?.weather ?? ''),
-      weatherCode: isToday ? (weather?.code ?? null) : (getRecord(dateStr)?.weatherCode ?? null),
-      temperature: isToday ? (weather?.temperature ?? null) : (getRecord(dateStr)?.temperature ?? null),
+      weather:       isToday ? (weather?.text          ?? '') : (rec?.weather       ?? ''),
+      weatherCode:   isToday ? (weather?.code          ?? null) : (rec?.weatherCode ?? null),
+      temperature:   isToday ? (weather?.temperature   ?? null) : (rec?.temperature ?? null),
+      feelsLike:     isToday ? (weather?.feelsLike      ?? null) : (rec?.feelsLike   ?? null),
+      humidity:      isToday ? (weather?.humidity       ?? null) : (rec?.humidity    ?? null),
+      precipitation: isToday ? (weather?.precipitation  ?? null) : (rec?.precipitation ?? null),
     })
     setSaved(true)
     setTimeout(() => setSaved(false), 2500)
   }
 
-  // カレンダー：その日と翌日の予定
-  const tomorrowStr = addDays(dateStr, 1)
-  const matchDate = (e, target) => {
-    if (e.start?.date) return e.start.date === target           // 終日イベント
-    if (e.start?.dateTime) return toLocalDateStr(e.start.dateTime) === target  // 時刻付き（タイムゾーン考慮）
-    return false
-  }
+  // カレンダー
+  const tomorrowStr    = addDays(dateStr, 1)
+  const matchDate      = (e, t) => e.start?.date ? e.start.date === t : toLocalDateStr(e.start?.dateTime ?? '') === t
   const todayEvents    = events.filter(e => matchDate(e, dateStr))
   const tomorrowEvents = events.filter(e => matchDate(e, tomorrowStr))
-  const showCalendar = isToday && cError !== 'no-config'
+  const showCalendar   = isToday && cError !== 'no-config'
 
   return (
     <div className="p-4 space-y-3">
@@ -114,26 +156,24 @@ export default function TodayRecord({ onSave }) {
       {/* ── 日付ナビゲーション ── */}
       <div className="flex items-center justify-between pt-2">
         <button onClick={() => setDateStr(addDays(dateStr, -1))}
-          className="w-9 h-9 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-slate-500 active:bg-slate-100">
+          className="w-9 h-9 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-slate-500 active:bg-slate-100 text-lg">
           ‹
         </button>
         <div className="flex-1 mx-2 text-center">
-          {isToday
-            ? <p className="text-xs text-indigo-500 font-semibold mb-0.5">今日</p>
-            : !isToday && <p className="text-xs text-slate-400 mb-0.5">{dateStr > todayStr ? '未来' : '過去の記録'}</p>
-          }
+          <p className="text-xs font-semibold mb-0.5 text-indigo-500">
+            {isToday ? '今日' : dateStr > todayStr ? '未来' : '過去の記録'}
+          </p>
           <input type="date" value={dateStr} max={todayStr}
             onChange={e => e.target.value && setDateStr(e.target.value)}
             className="text-base font-bold text-slate-800 text-center bg-transparent border-none focus:outline-none cursor-pointer w-full" />
         </div>
-        <button onClick={() => !isToday && setDateStr(addDays(dateStr, 1))}
-          disabled={isToday}
-          className="w-9 h-9 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-slate-500 active:bg-slate-100 disabled:opacity-30">
+        <button onClick={() => !isToday && setDateStr(addDays(dateStr, 1))} disabled={isToday}
+          className="w-9 h-9 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-slate-500 active:bg-slate-100 disabled:opacity-30 text-lg">
           ›
         </button>
       </div>
 
-      {/* ── 天気（今日のみ） ── */}
+      {/* ── 天気（今日のみ・湿度・体感温度も表示） ── */}
       {isToday && (
         <div className="flex justify-end">
           <WeatherBadge weather={weather} loading={wLoading} error={wError} onReload={wReload} />
@@ -187,12 +227,12 @@ export default function TodayRecord({ onSave }) {
         </div>
       </div>
 
-      {/* ── 気分スコア ── */}
+      {/* ── 気分スコア（カスタム顔文字対応） ── */}
       <div className="card space-y-3">
         <p className="section-title">気分スコア（1–10）</p>
         {form.moodScore > 0 && (
           <div className="text-center py-1">
-            <span className="text-4xl">{MOOD_EMOJI[form.moodScore]}</span>
+            <span className="text-4xl">{moodEmoji[form.moodScore]}</span>
             <p className="text-sm text-slate-500 mt-1">{MOOD_LABEL[form.moodScore]}</p>
           </div>
         )}
@@ -200,17 +240,16 @@ export default function TodayRecord({ onSave }) {
           {[1,2,3,4,5,6,7,8,9,10].map(n => (
             <button key={n} onClick={() => set('moodScore', n)}
               className={`flex flex-col items-center py-2 rounded-xl border-2 transition-all active:scale-95 ${
-                form.moodScore === n
-                  ? MOOD_BG[n] + ' border-opacity-100 shadow-sm scale-105'
-                  : 'bg-slate-50 border-slate-100'
+                form.moodScore === n ? MOOD_BG[n] + ' shadow-sm scale-105' : 'bg-slate-50 border-slate-100'
               }`}>
-              <span className="text-xl leading-none">{MOOD_EMOJI[n]}</span>
+              <span className="text-xl leading-none">{moodEmoji[n]}</span>
               <span className="text-[10px] text-slate-400 mt-0.5 font-medium">{n}</span>
             </button>
           ))}
         </div>
         <div className="flex justify-between text-[10px] text-slate-400 px-1">
-          <span>😭 とても辛い</span><span>とても良い 🤩</span>
+          <span>{moodEmoji[1]} とても辛い</span>
+          <span>とても良い {moodEmoji[10]}</span>
         </div>
       </div>
 
@@ -242,53 +281,78 @@ export default function TodayRecord({ onSave }) {
       </div>
 
       {/* ── 精神科の服薬 ── */}
-      <div className="card">
-        <p className="section-title mb-2">精神科の服薬</p>
+      <div className="card space-y-2">
+        <p className="section-title">精神科の服薬</p>
         <div className="flex gap-2">
           <button onClick={() => set('medication', true)}
             className={`flex-1 py-3 rounded-xl text-sm font-semibold transition-all ${
               form.medication === true ? 'bg-emerald-500 text-white shadow-sm' : 'bg-slate-100 text-slate-500'
-            }`}>
-            ✓ 服薬済み
-          </button>
+            }`}>✓ 服薬済み</button>
           <button onClick={() => set('medication', false)}
             className={`flex-1 py-3 rounded-xl text-sm font-semibold transition-all ${
               form.medication === false ? 'bg-red-400 text-white shadow-sm' : 'bg-slate-100 text-slate-500'
-            }`}>
-            ✗ 未服薬
-          </button>
+            }`}>✗ 未服薬</button>
         </div>
+
+        {/* マイ薬リスト */}
+        {takenMeds.length > 0 && (
+          <div className="space-y-1.5 pt-1">
+            <p className="text-[10px] text-slate-400 font-medium">マイ薬リスト</p>
+            {takenMeds.map(m => (
+              <div key={m.id}
+                className={`flex items-center gap-2 rounded-xl px-3 py-2 border transition-all ${
+                  m.taken ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200'
+                }`}>
+                {/* 服薬チェック */}
+                <button onClick={() => toggleTaken(m.id)}
+                  className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${
+                    m.taken ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-slate-300'
+                  }`}>
+                  {m.taken && <span className="text-xs">✓</span>}
+                </button>
+                <span className="text-sm font-medium text-slate-700 flex-1">{m.name}</span>
+                {/* 用量入力 */}
+                <div className="flex items-center gap-1 shrink-0">
+                  <input
+                    type="number" min="0" step="0.5"
+                    value={m.dose}
+                    onChange={e => changeDose(m.id, e.target.value)}
+                    className="w-12 text-center text-sm border border-slate-200 rounded-lg px-1 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white"
+                  />
+                  <span className="text-xs text-slate-400">{m.unit}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {takenMeds.length === 0 && (
+          <p className="text-xs text-slate-400 text-center pt-1">
+            設定画面でマイ薬リストを登録すると、ここに表示されます
+          </p>
+        )}
       </div>
 
-      {/* ── その他の薬 ── */}
+      {/* ── その他の薬・市販薬 ── */}
       <div className="card space-y-2">
         <p className="section-title">その他の薬・市販薬</p>
-
-        {/* 追加済みリスト */}
         {otherMeds.map(m => (
           <div key={m.id} className="flex items-center justify-between bg-slate-50 rounded-xl px-3 py-2">
             <div className="flex items-center gap-2 min-w-0">
-              <span className="text-base">💊</span>
+              <span>💊</span>
               <div className="min-w-0">
                 <p className="text-sm font-medium text-slate-700">{m.name}</p>
                 {(m.dose || m.time) && (
-                  <p className="text-xs text-slate-400">
-                    {[m.dose, m.time].filter(Boolean).join(' · ')}
-                  </p>
+                  <p className="text-xs text-slate-400">{[m.dose, m.time].filter(Boolean).join(' · ')}</p>
                 )}
               </div>
             </div>
-            <button onClick={() => removeMed(m.id)} className="text-slate-300 hover:text-red-400 text-lg ml-2 flex-shrink-0">
-              ×
-            </button>
+            <button onClick={() => removeOtherMed(m.id)} className="text-slate-300 hover:text-red-400 text-xl ml-2">×</button>
           </div>
         ))}
-
-        {/* プリセットクイック追加 */}
         {!showMedForm && (
           <div className="flex flex-wrap gap-1.5 mt-1">
-            {PRESET_MEDS.map(name => (
-              <button key={name} onClick={() => addMed(name)}
+            {['頭痛薬', '解熱剤', '胃薬', '鎮痛剤', '整腸剤', '抗ヒスタミン薬', 'ビタミン剤', '漢方薬'].map(name => (
+              <button key={name} onClick={() => addOtherMed(name)}
                 className="text-xs bg-white border border-slate-200 text-slate-600 px-2.5 py-1.5 rounded-full hover:border-indigo-300 hover:text-indigo-600 transition-colors">
                 + {name}
               </button>
@@ -299,29 +363,21 @@ export default function TodayRecord({ onSave }) {
             </button>
           </div>
         )}
-
-        {/* カスタム入力フォーム */}
         {showMedForm && (
           <div className="border border-indigo-100 rounded-xl p-3 space-y-2 bg-indigo-50">
             <input value={newMed.name} onChange={e => setNewMed(m => ({ ...m, name: e.target.value }))}
-              placeholder="薬の名前（例：イブプロフェン）"
-              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white" />
+              placeholder="薬の名前" className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white" />
             <div className="grid grid-cols-2 gap-2">
               <input value={newMed.dose} onChange={e => setNewMed(m => ({ ...m, dose: e.target.value }))}
-                placeholder="用量（例：1錠）"
-                className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white" />
+                placeholder="用量（例：1錠）" className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white" />
               <input type="time" value={newMed.time} onChange={e => setNewMed(m => ({ ...m, time: e.target.value }))}
                 className="border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white" />
             </div>
             <div className="flex gap-2">
               <button onClick={() => { setShowMedForm(false); setNewMed({ name: '', dose: '', time: '' }) }}
-                className="flex-1 py-2 rounded-lg bg-white border border-slate-200 text-slate-500 text-sm">
-                キャンセル
-              </button>
-              <button onClick={() => addMed()} disabled={!newMed.name.trim()}
-                className="flex-1 py-2 rounded-lg bg-indigo-500 text-white text-sm font-semibold disabled:opacity-40">
-                追加
-              </button>
+                className="flex-1 py-2 rounded-lg bg-white border border-slate-200 text-slate-500 text-sm">キャンセル</button>
+              <button onClick={() => addOtherMed()} disabled={!newMed.name.trim()}
+                className="flex-1 py-2 rounded-lg bg-indigo-500 text-white text-sm font-semibold disabled:opacity-40">追加</button>
             </div>
           </div>
         )}
@@ -355,7 +411,7 @@ function EmojiButtons({ value, count, emojis, labels, bgs, onChange }) {
       {Array.from({ length: count }, (_, i) => i + 1).map(n => (
         <button key={n} onClick={() => onChange(n)}
           className={`flex-1 flex flex-col items-center py-2.5 rounded-xl border-2 transition-all active:scale-95 ${
-            value === n ? bgs[n] + ' border-opacity-100 shadow-sm scale-105' : 'bg-slate-50 border-slate-100'
+            value === n ? bgs[n] + ' shadow-sm scale-105' : 'bg-slate-50 border-slate-100'
           }`}>
           <span className="text-2xl leading-none">{emojis[n]}</span>
           <span className="text-[10px] text-slate-400 mt-0.5">{n}</span>
@@ -367,12 +423,13 @@ function EmojiButtons({ value, count, emojis, labels, bgs, onChange }) {
 
 function WeatherBadge({ weather, loading, error, onReload }) {
   if (loading) return <p className="text-xs text-slate-400">天気取得中...</p>
-  if (error) return <button onClick={onReload} className="text-xs text-amber-500 underline">再取得</button>
+  if (error)   return <button onClick={onReload} className="text-xs text-amber-500 underline">再取得</button>
   if (!weather) return null
   return (
-    <button onClick={onReload} className="text-right active:opacity-70">
+    <button onClick={onReload} className="text-right active:opacity-70 space-y-0.5">
       <p className="text-3xl leading-none">{weather.emoji}</p>
-      <p className="text-xs text-slate-500 mt-0.5">{weather.text} {weather.temperature}°C</p>
+      <p className="text-xs font-medium text-slate-600">{weather.text} {weather.temperature}°C</p>
+      <p className="text-[10px] text-slate-400">体感 {weather.feelsLike}°C・湿度 {weather.humidity}%</p>
     </button>
   )
 }

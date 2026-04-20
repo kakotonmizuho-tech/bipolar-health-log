@@ -3,6 +3,24 @@ import { getSettings } from '../utils/storage'
 
 const SCOPES = 'https://www.googleapis.com/auth/calendar.readonly'
 const DISCOVERY = 'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest'
+const TOKEN_KEY = 'ghl_cal_token'
+
+// トークンをlocalStorageに保存（有効期限付き）
+function saveToken(resp) {
+  localStorage.setItem(TOKEN_KEY, JSON.stringify({
+    access_token: resp.access_token,
+    expiry: Date.now() + resp.expires_in * 1000,
+  }))
+}
+
+// 保存済みの有効なトークンを取得
+function loadToken() {
+  try {
+    const d = JSON.parse(localStorage.getItem(TOKEN_KEY) ?? '{}')
+    if (d.access_token && d.expiry > Date.now() + 120000) return d.access_token
+  } catch {}
+  return null
+}
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -60,16 +78,25 @@ export function useCalendar() {
       await new Promise(r => window.gapi.load('client', r))
       await window.gapi.client.init({ apiKey, discoveryDocs: [DISCOVERY] })
 
+      // 保存済みトークンが有効ならそのまま使う（ログイン画面を出さない）
+      const stored = loadToken()
+      if (stored) {
+        window.gapi.client.setToken({ access_token: stored })
+        await fetchEvents()
+        return
+      }
+
+      // トークンがない or 期限切れ → OAuth フロー
       await loadScript('https://accounts.google.com/gsi/client')
       tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
         client_id: clientId,
         scope: SCOPES,
         callback: async (resp) => {
           if (resp.error) { setError('認証に失敗しました'); return }
+          saveToken(resp)          // トークンを保存
           await fetchEvents()
         },
       })
-      // Try silent token request first
       tokenClientRef.current.requestAccessToken({ prompt: '' })
     } catch {
       setError('Google APIの初期化に失敗しました')
